@@ -2,9 +2,15 @@
 mongod-keyfile/
 mongot-secrets/
 
-# Local Docker/runtime data
+# Local env files
+.env
+examples/voyage-nano-local/.env
+
+# Python local environment/cache
+examples/voyage-nano-local/.venv/
+__pycache__/
+*.pyc
+
+# Docker/runtime/local files
 *.log
 .DS_Store
-
-# Optional local overrides
-.env

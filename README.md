@@ -1,141 +1,238 @@
-# MongoDB Community 8.3 + Community Search / mongot Local Setup
+# MongoDB Community 8.3 + Community Search / mongot + Local Voyage 4 Nano
 
-This project runs a local MongoDB Community environment with:
+This project runs a fully local development stack for:
 
 - MongoDB Community Server 8.3.2
 - MongoDB Community Search / `mongot`
 - Single-node replica set: `rs0`
-- Local Vector Search-ready architecture
+- MongoDB `$vectorSearch`
+- MongoDB `$search`
+- Local embeddings using `voyageai/voyage-4-nano`
 - Docker Compose
 
-This setup is intended for local development with embeddings, RAG, and `$vectorSearch`.
+The goal is to run local semantic search and RAG-style experiments without using MongoDB Atlas cloud or Voyage hosted APIs.
 
 ---
 
-## Prerequisites
+## Architecture
 
-Install the following on your laptop:
+```text
+Local Python app
+  |
+  | Generates embeddings locally with voyageai/voyage-4-nano
+  v
+MongoDB on localhost:27017
+  |
+  | Stores documents + embedding vectors
+  v
+mongod-vector-local
+  |
+  | Uses gRPC for Search/Vector Search
+  v
+mongot-vector-local
 
-- Docker Desktop
-- Git
-- MongoDB Shell (`mongosh`)
+Your application connects only to MongoDB:
 
-Check that Docker is running:
+mongodb://root:root-password@localhost:27017
 
-```bash
+It does not connect directly to mongot.
+
+Prerequisites
+
+Install:
+
+Docker Desktop
+Git
+GitHub CLI, optional but useful
+MongoDB Shell: mongosh
+Python 3.11
+Homebrew, recommended on macOS
+
+Check versions:
+
 docker version
-
-Check that mongosh is installed:
-
+git --version
 mongosh --version
-1. Clone this repository
+python3.11 --version
+
+If Python 3.11 is missing on macOS:
+
+brew install python@3.11
+Quick start
+
+Clone the repo:
+
 git clone https://github.com/YOUR_USERNAME/mongodb-vector-local.git
 cd mongodb-vector-local
 
-Replace YOUR_USERNAME with your GitHub username.
+Run the bootstrap script:
 
-2. Generate local secrets
+./scripts/bootstrap.sh
 
-Do not commit local secret files to GitHub.
+This script does the following:
 
-Run:
+Creates local secrets
+Starts MongoDB
+Initializes replica set rs0
+Creates mongotUser
+Starts mongot
+Waits for Search commands to become available
+Creates the vector index
 
-./scripts/setup-secrets.sh
+Check status:
 
-This creates:
+./scripts/check-status.sh
+Set up local Voyage 4 Nano
 
-mongod-keyfile/keyfile
-mongot-secrets/passwordFile
+Create the Python environment:
 
-These files are required locally but should stay ignored by Git.
+./scripts/setup-python-voyage.sh
 
-3. Start MongoDB first
+Activate the environment:
 
-Start only the MongoDB container:
+cd examples/voyage-nano-local
+source .venv/bin/activate
 
-docker compose up -d mongod
+Generate local embeddings and store them in MongoDB:
 
-Check that it is running:
+python embed_store.py
 
-docker ps
+Expected output includes:
 
-Expected container:
+Inserted 5 documents.
+Embeddings were generated locally and stored in MongoDB.
 
-mongod-vector-local
-4. Initialize MongoDB
+The first run downloads the model from Hugging Face. After that, the model is cached locally.
 
-Run:
+Test vector search
 
-./scripts/init-mongodb.sh
+From:
 
-This script does three things:
-
-Tests root authentication
-Initializes the single-node replica set rs0
-Creates the mongotUser user with the searchCoordinator role
-5. Start mongot
-
-After MongoDB is initialized, start mongot:
-
-docker compose up -d mongot
-
-Check both containers:
-
-docker ps
-
-Expected:
-
-mongod-vector-local   Up
-mongot-vector-local   Up
-6. Check mongot logs
+cd examples/voyage-nano-local
+source .venv/bin/activate
 
 Run:
 
-docker logs mongot-vector-local --tail 100
+python query_vector.py
 
-You want to see lines similar to:
+Default query:
 
-Monitor thread successfully connected
-type=REPLICA_SET_PRIMARY
-setName='rs0'
-mongoDbVersion=8.3.2
-Starting gRPC server
-Starting health check server
-Indexes built and cache initialized
+How does local MongoDB vector search work?
 
-This confirms that mongot successfully connected to mongod.
+Expected output:
 
-7. Test MongoDB from your laptop
+Top matches:
+{'title': 'MongoDB Community Search', ...}
+{'title': 'Docker Architecture', ...}
+...
 
-Run:
+You can override the query:
 
-mongosh "mongodb://root:root-password@localhost:27017/?authSource=admin&directConnection=true"
+QUERY="What is RAG retrieval?" python query_vector.py
 
-Inside mongosh, test:
+You can also filter by metadata, for example:
 
-db.runCommand({ ping: 1 })
-db.version()
-rs.status().ok
+PLATFORM_FILTER=aws QUERY="What is generative AI on AWS?" python query_vector.py
 
-Expected results:
+This works because the vector index includes platform as a filter field.
 
-{ ok: 1 }
-8.3.2
-1
+Verify stored vectors manually
 
-Exit mongosh:
+Connect to MongoDB:
 
-exit
-8. Application connection string
+mongosh "mongodb://root:root-password@localhost:27017/rag_demo?authSource=admin&directConnection=true"
 
-Use this connection string from a local Node.js app:
+Check documents:
 
-MONGODB_URI=mongodb://root:root-password@localhost:27017/schemaConverter?authSource=admin&directConnection=true
+db.documents.find(
+  { source: "local-demo" },
+  {
+    title: 1,
+    platform: 1,
+    embeddingModel: 1,
+    embeddingDimensions: 1,
+    embeddingPreview: { $slice: ["$embedding", 5] }
+  }
+).pretty()
 
-Example .env:
+You should see:
 
-MONGODB_URI=mongodb://root:root-password@localhost:27017/schemaConverter?authSource=admin&directConnection=true
-9. Daily usage
+embeddingModel: "voyageai/voyage-4-nano"
+embeddingDimensions: 1024
+embeddingPreview: [ ... ]
+Verify Search and Vector Search
+
+List Search indexes:
+
+mongosh "mongodb://root:root-password@localhost:27017/rag_demo?authSource=admin&directConnection=true" --eval '
+db.runCommand({ listSearchIndexes: "documents" })
+'
+
+You should see vector_index.
+
+Create or recreate the vector index manually:
+
+./scripts/create-vector-index.sh
+
+Optional: create a text search index for $search:
+
+./scripts/create-text-search-index.sh
+Test $vectorSearch manually
+
+query_vector.py is the easiest way because it generates a query vector locally.
+
+The core query it runs is equivalent to:
+
+db.documents.aggregate([
+  {
+    $vectorSearch: {
+      index: "vector_index",
+      path: "embedding",
+      queryVector: [...],
+      numCandidates: 50,
+      limit: 5
+    }
+  },
+  {
+    $project: {
+      _id: 0,
+      title: 1,
+      text: 1,
+      platform: 1,
+      score: { $meta: "vectorSearchScore" }
+    }
+  }
+])
+Test $search
+
+First create the text search index:
+
+./scripts/create-text-search-index.sh
+
+Then run:
+
+mongosh "mongodb://root:root-password@localhost:27017/rag_demo?authSource=admin&directConnection=true" --eval '
+db.documents.aggregate([
+  {
+    $search: {
+      index: "text_search_index",
+      text: {
+        query: "MongoDB vector search",
+        path: ["title", "text"]
+      }
+    }
+  },
+  {
+    $project: {
+      _id: 0,
+      title: 1,
+      text: 1,
+      score: { $meta: "searchScore" }
+    }
+  }
+])
+'
+Daily commands
 
 Start everything:
 
@@ -145,13 +242,13 @@ Stop everything:
 
 docker compose stop
 
-Check running containers:
+Check containers:
 
 docker ps
 
-Check all containers, including stopped ones:
+Check stack status:
 
-docker ps -a
+./scripts/check-status.sh
 
 View MongoDB logs:
 
@@ -160,51 +257,53 @@ docker logs mongod-vector-local --tail 100
 View mongot logs:
 
 docker logs mongot-vector-local --tail 100
-10. Reset everything
+Reset everything
 
-Warning: this deletes all local MongoDB and mongot data.
+Warning: this deletes all MongoDB and mongot local data.
 
 docker compose down -v
 
-Then recreate secrets if needed:
+Then rebuild:
 
-./scripts/setup-secrets.sh
+./scripts/bootstrap.sh
 
-Start again:
+Then regenerate embeddings:
 
-docker compose up -d mongod
-./scripts/init-mongodb.sh
-docker compose up -d mongot
-11. Important files
+./scripts/setup-python-voyage.sh
+cd examples/voyage-nano-local
+source .venv/bin/activate
+python embed_store.py
+python query_vector.py
+Important files
 docker-compose.yml
 mongot-config/config.yml
+scripts/bootstrap.sh
 scripts/setup-secrets.sh
 scripts/init-mongodb.sh
-.gitignore
-README.md
+scripts/wait-for-search.sh
+scripts/create-vector-index.sh
+scripts/create-text-search-index.sh
+scripts/check-status.sh
+scripts/setup-python-voyage.sh
+examples/voyage-nano-local/embed_store.py
+examples/voyage-nano-local/query_vector.py
+examples/voyage-nano-local/requirements.txt
+examples/voyage-nano-local/.env.example
 
-Generated local files that should not be committed:
+Generated local files not committed to Git:
 
 mongod-keyfile/keyfile
 mongot-secrets/passwordFile
-12. Architecture
-Local app / mongosh
-        |
-        v
-localhost:27017
-        |
-        v
-mongod-vector-local
-MongoDB Community Server 8.3.2
-Replica set: rs0
-        |
-        v
-mongot-vector-local
-MongoDB Community Search
+examples/voyage-nano-local/.env
+examples/voyage-nano-local/.venv/
+Notes
 
-The application connects only to mongod on localhost:27017.
+This setup uses simple local demo credentials:
 
-It does not connect directly to mongot.
+root / root-password
+mongotUser / mongot-password
 
-mongot is used internally by MongoDB for Search and Vector Search functionality.
+Do not use these credentials for production.
+
+This project is intended for local development and learning.
 

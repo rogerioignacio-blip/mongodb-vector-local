@@ -9,6 +9,14 @@ services:
       - --bind_ip_all
       - --keyFile
       - /etc/mongo-keyfile/keyfile
+      - --setParameter
+      - mongotHost=mongot-vector-local:27028
+      - --setParameter
+      - searchIndexManagementHostAndPort=mongot-vector-local:27028
+      - --setParameter
+      - useGrpcForSearch=true
+      - --setParameter
+      - skipAuthenticationToSearchIndexManagementServer=false
     environment:
       MONGODB_INITDB_ROOT_USERNAME: root
       MONGODB_INITDB_ROOT_PASSWORD: root-password
