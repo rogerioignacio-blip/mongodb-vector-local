@@ -1,0 +1,10 @@
+# Local generated secrets
+mongod-keyfile/
+mongot-secrets/
+
+# Local Docker/runtime data
+*.log
+.DS_Store
+
+# Optional local overrides
+.env

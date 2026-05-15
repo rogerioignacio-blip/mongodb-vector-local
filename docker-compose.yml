@@ -1,0 +1,40 @@
+services:
+  mongod:
+    image: mongodb/mongodb-community-server:8.3.2-ubuntu2204
+    container_name: mongod-vector-local
+    command:
+      - mongod
+      - --replSet
+      - rs0
+      - --bind_ip_all
+      - --keyFile
+      - /etc/mongo-keyfile/keyfile
+    environment:
+      MONGODB_INITDB_ROOT_USERNAME: root
+      MONGODB_INITDB_ROOT_PASSWORD: root-password
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongod-data:/data/db
+      - ./mongod-keyfile/keyfile:/etc/mongo-keyfile/keyfile:ro
+    networks:
+      - mongo-vector-net
+
+  mongot:
+    image: mongodb/mongodb-community-search:0.65.1
+    container_name: mongot-vector-local
+    depends_on:
+      - mongod
+    volumes:
+      - ./mongot-config/config.yml:/mongot-community/config.default.yml:ro
+      - ./mongot-secrets/passwordFile:/etc/mongot/secrets/passwordFile:ro
+      - mongot-data:/var/lib/mongot
+    networks:
+      - mongo-vector-net
+
+volumes:
+  mongod-data:
+  mongot-data:
+
+networks:
+  mongo-vector-net:
